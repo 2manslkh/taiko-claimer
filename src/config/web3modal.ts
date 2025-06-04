@@ -1,4 +1,4 @@
-import { createWeb3Modal } from '@web3modal/wagmi/react'
+// import { createWeb3Modal } from '@web3modal/wagmi/react' // This import is no longer needed here
 import { defaultWagmiConfig } from '@web3modal/wagmi/react/config'
 
 import { type Chain } from 'viem' // Import Chain type from viem
@@ -37,20 +37,20 @@ export const wagmiConfig = defaultWagmiConfig({
 })
 
 // 3. Create modal
-createWeb3Modal({
-    wagmiConfig,
-    projectId,
-    // Optional - Add custom themes
-    // themeMode: 'light',
-    // themeVariables: {
-    //   '--w3m-font-family': 'Roboto, sans-serif',
-    //   '--w3m-accent': '#00BB7F'
-    // },
-    // Optional - Add custom featured wallets
-    // featuredWalletIds: [],
-    // Optional - Add custom chains
-    // chains // Not needed if already in wagmiConfig
-})
+// createWeb3Modal({ // <--- REMOVE THIS CALL
+//     wagmiConfig,
+//     projectId,
+//     // Optional - Add custom themes
+//     // themeMode: 'light',
+//     // themeVariables: {
+//     //   '--w3m-font-family': 'Roboto, sans-serif',
+//     //   '--w3m-accent': '#00BB7F'
+//     // },
+//     // Optional - Add custom featured wallets
+//     // featuredWalletIds: [],
+//     // Optional - Add custom chains
+//     // chains // Not needed if already in wagmiConfig
+// }) // <--- REMOVE THIS CALL
 
 export function Web3ModalProvider({ children }: { children: React.ReactNode }) {
     return children; // The actual provider will be in layout.tsx

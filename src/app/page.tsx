@@ -34,6 +34,7 @@ const CLAIM_ELIGIBILITY_TIMESTAMP = STATIC_TGE_TIMESTAMP + STATIC_ONE_YEAR;
 const TOKEN_DECIMALS = 18; // For TKO token
 
 const ETHERSCAN_BASE_URL = "https://etherscan.io/address/";
+const COINMARKETCAP_URL = "https://coinmarketcap.com/currencies/taiko/";
 
 export default function HomePage() {
   const { open } = useWeb3Modal();
@@ -195,7 +196,7 @@ export default function HomePage() {
       withdrawableAmount !== undefined &&
       typeof withdrawableAmount === "bigint"
     ) {
-      setWithdrawAmountInput(formatEther(withdrawableAmount, "wei")); // Keep full precision for input
+      setWithdrawAmountInput(formatEther(withdrawableAmount)); // formatEther defaults to 18 decimals
     }
   }, [withdrawableAmount]);
 
@@ -219,7 +220,7 @@ export default function HomePage() {
     }
     if (!isConnected || !connectedAddress) {
       toast.error("Please connect your wallet to claim.");
-      open(); // Open modal to connect
+      open();
       return;
     }
     if (currentChainId !== mainnet.id) {
@@ -236,12 +237,48 @@ export default function HomePage() {
       return;
     }
 
+    let amountToWithdrawBigInt: bigint;
+    try {
+      if (!withdrawAmountInput.trim()) {
+        toast.error("Please enter an amount to withdraw.");
+        return;
+      }
+      amountToWithdrawBigInt = parseUnits(withdrawAmountInput, TOKEN_DECIMALS);
+      if (amountToWithdrawBigInt <= BigInt(0)) {
+        toast.error("Withdrawal amount must be greater than zero.");
+        return;
+      }
+      if (
+        typeof withdrawableAmount !== "bigint" ||
+        amountToWithdrawBigInt > withdrawableAmount
+      ) {
+        toast.error(
+          "Withdrawal amount cannot exceed the currently withdrawable amount or available amount not loaded."
+        );
+        return;
+      }
+    } catch (error) {
+      console.error("Error parsing withdraw amount:", error);
+      toast.error("Invalid withdrawal amount. Please enter a valid number.");
+      return;
+    }
+
+    if (
+      typeof withdrawableAmount !== "bigint" ||
+      amountToWithdrawBigInt > withdrawableAmount
+    ) {
+      toast.error(
+        "Cannot withdraw more than the available amount (safety check)."
+      );
+      return;
+    }
+
     claimTokens(
       {
         abi: vestingContractAbi,
         address: derivedProxyAddress,
         functionName: "withdraw",
-        args: [connectedAddress, withdrawableAmount as bigint], // _to, _amount
+        args: [connectedAddress, amountToWithdrawBigInt],
         chainId: mainnet.id,
       },
       {
@@ -258,9 +295,11 @@ export default function HomePage() {
   useEffect(() => {
     if (isClaimConfirmed) {
       toast.success("Tokens claimed successfully!");
-      refetchAmountWithdrawable(); // Refresh withdrawable amount
+      refetchWithdrawableAmount();
+      refetchAmountVested();
+      setWithdrawAmountInput("");
     }
-  }, [isClaimConfirmed, refetchAmountWithdrawable]);
+  }, [isClaimConfirmed, refetchWithdrawableAmount, refetchAmountVested]);
 
   useEffect(() => {
     if (claimError) {
@@ -272,19 +311,71 @@ export default function HomePage() {
     }
   }, [claimError]);
 
+  const formattedContractAmountVested = useMemo(() => {
+    if (
+      contractAmountVested !== undefined &&
+      typeof contractAmountVested === "bigint"
+    ) {
+      return parseFloat(formatEther(contractAmountVested)).toFixed(4); // Display with 4 decimal places
+    }
+    return "Loading...";
+  }, [contractAmountVested]);
+
   const formattedWithdrawableAmount = useMemo(() => {
     if (
       withdrawableAmount !== undefined &&
       typeof withdrawableAmount === "bigint"
     ) {
-      return parseFloat(formatEther(withdrawableAmount)).toFixed(4);
+      return parseFloat(formatEther(withdrawableAmount)).toFixed(4); // Display with 4 decimal places
     }
     return "0.0000";
   }, [withdrawableAmount]);
 
+  const canClaim = useMemo(() => {
+    if (!withdrawAmountInput.trim()) return false;
+    try {
+      const amount = parseUnits(withdrawAmountInput, TOKEN_DECIMALS);
+      return (
+        isClaimTime &&
+        isConnected &&
+        !isClaiming &&
+        !isConfirming &&
+        amount > BigInt(0) &&
+        typeof withdrawableAmount === "bigint" &&
+        amount <= withdrawableAmount &&
+        vestingInfo?.recipient.toLowerCase() === connectedAddress?.toLowerCase()
+      );
+    } catch {
+      return false;
+    }
+  }, [
+    withdrawAmountInput,
+    isClaimTime,
+    isConnected,
+    isClaiming,
+    isConfirming,
+    withdrawableAmount,
+    vestingInfo,
+    connectedAddress,
+  ]);
+
+  const handleSetMaxWithdraw = () => {
+    if (
+      withdrawableAmount !== undefined &&
+      typeof withdrawableAmount === "bigint" &&
+      withdrawableAmount > BigInt(0)
+    ) {
+      // Use formatEther to get the full precision string representation
+      setWithdrawAmountInput(formatEther(withdrawableAmount));
+      toast.info("Withdraw amount set to maximum available.");
+    } else {
+      toast.info("Withdrawable amount not available or already zero.");
+    }
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen py-12 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
-      <Card className="w-full max-w-md bg-slate-800 border-slate-700 shadow-xl">
+    <div className="flex flex-col items-center justify-start min-h-screen py-12 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+      <Card className="w-full max-w-md bg-slate-800 border-slate-700 shadow-xl mb-12">
         <CardHeader>
           <CardTitle className="text-center text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-pink-500 via-red-500 to-yellow-500">
             Taiko Vesting Token Claim
@@ -293,9 +384,21 @@ export default function HomePage() {
             Connect your wallet or enter an address to view vesting details and
             claim your TKO tokens.
           </CardDescription>
+          <div className="text-center pt-3">
+            <a
+              href={COINMARKETCAP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View Taiko on CoinMarketCap"
+              className="text-blue-400 hover:text-blue-300 underline text-sm font-medium"
+            >
+              COIN MARKETCAP
+            </a>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex justify-center">
+            {/* @ts-expect-error - Web3Modal is not typed */}
             <w3m-button />
           </div>
 
@@ -359,49 +462,103 @@ export default function HomePage() {
               </p>
               <p className="text-sm text-slate-400">
                 <span className="font-medium text-slate-300">
-                  Total Vesting (from data):
+                  Total Vested (Contract):
                 </span>{" "}
-                {vestingInfo
-                  ? (vestingInfo.vestAmount / 10 ** 4).toFixed(4)
-                  : "N/A"}{" "}
-                TKO{" "}
-                <span className="text-xs">(example, assumes 4 decimals)</span>
+                {isLoadingContractAmountVested
+                  ? "Loading..."
+                  : errorAmountVested
+                  ? "Error"
+                  : `${formattedContractAmountVested} TKO`}
               </p>
 
               <div className="flex items-center justify-between">
                 <p
                   className={`text-xl font-semibold ${
-                    errorAmount ? "text-red-400" : "text-pink-400"
+                    errorWithdrawableAmount ? "text-red-400" : "text-pink-400"
                   }`}
                 >
                   Withdrawable Now:{" "}
-                  {errorAmount ? "Error" : formattedWithdrawableAmount} TKO
+                  {errorWithdrawableAmount
+                    ? "Error"
+                    : formattedWithdrawableAmount}{" "}
+                  TKO
                 </p>
                 <Button
                   variant="outline"
                   size="icon"
-                  onClick={() => refetchAmountWithdrawable()}
-                  disabled={isLoadingAmount}
+                  onClick={() => {
+                    refetchWithdrawableAmount();
+                    refetchAmountVested();
+                  }}
+                  disabled={
+                    isLoadingWithdrawableAmount || isLoadingContractAmountVested
+                  }
                   className="border-pink-500 text-pink-500 hover:bg-pink-500/10 hover:text-pink-400 disabled:opacity-50"
-                  title="Refresh withdrawable amount"
+                  title="Refresh amounts"
                 >
                   <RefreshCw
                     className={`h-4 w-4 ${
-                      isLoadingAmount ? "animate-spin" : ""
+                      isLoadingWithdrawableAmount ||
+                      isLoadingContractAmountVested
+                        ? "animate-spin"
+                        : ""
                     }`}
                   />
                 </Button>
               </div>
-              {isLoadingAmount && !errorAmount && (
+              {isLoadingWithdrawableAmount && !errorWithdrawableAmount && (
                 <p className="text-slate-400 text-xs">
                   Loading withdrawable amount...
                 </p>
               )}
-              {!isLoadingAmount && errorAmount && (
+              {!isLoadingWithdrawableAmount && errorWithdrawableAmount && (
                 <p className="text-red-400 text-xs">
                   Could not load withdrawable amount. Try refreshing.
                 </p>
               )}
+
+              {/* Withdraw Amount Input */}
+              <div className="space-y-2">
+                <Label htmlFor="withdrawAmount" className="text-slate-300">
+                  Amount to Withdraw (TKO):
+                </Label>
+                <div className="flex space-x-2 items-center">
+                  <Input
+                    id="withdrawAmount"
+                    type="text"
+                    placeholder={`Max: ${formattedWithdrawableAmount}`}
+                    value={withdrawAmountInput}
+                    onChange={(e) => setWithdrawAmountInput(e.target.value)}
+                    disabled={
+                      !isClaimTime ||
+                      !isConnected ||
+                      isLoadingWithdrawableAmount ||
+                      isConfirming ||
+                      isClaiming ||
+                      typeof withdrawableAmount !== "bigint" ||
+                      withdrawableAmount === BigInt(0)
+                    }
+                    className="flex-grow bg-slate-700 border-slate-600 text-white placeholder-slate-400 focus:ring-pink-500 focus:border-pink-500 disabled:opacity-70"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSetMaxWithdraw}
+                    disabled={
+                      !isClaimTime ||
+                      !isConnected ||
+                      isLoadingWithdrawableAmount ||
+                      isConfirming ||
+                      isClaiming ||
+                      typeof withdrawableAmount !== "bigint" ||
+                      withdrawableAmount === BigInt(0)
+                    }
+                    className="border-pink-500 text-pink-500 hover:bg-pink-500/10 hover:text-pink-400 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Set Max
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -429,16 +586,7 @@ export default function HomePage() {
           <CardFooter className="flex flex-col space-y-3 pt-6 border-t border-slate-700">
             <Button
               onClick={handleClaim}
-              disabled={
-                !isClaimTime ||
-                !isConnected ||
-                isClaiming ||
-                isConfirming ||
-                !withdrawableAmount ||
-                withdrawableAmount === BigInt(0) ||
-                vestingInfo?.recipient.toLowerCase() !==
-                  connectedAddress?.toLowerCase()
-              }
+              disabled={!canClaim}
               className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isClaiming
@@ -464,13 +612,98 @@ export default function HomePage() {
           </CardFooter>
         )}
       </Card>
-      <p className="text-center text-xs text-slate-500 mt-8">
-        Ensure you are on Ethereum Mainnet. Replace YOUR_PROJECT_ID in web3modal
-        config.
-        <br />
-        Token decimal display for &apos;Total Vesting&apos; and
-        &apos;Withdrawable Now&apos; assumes 18 decimals for formatting. Adjust
-        if TKO has a different precision.
+
+      {/* Vesting Data Table Section */}
+      <div className="w-full max-w-5xl mx-auto mt-8 px-4">
+        <h2 className="text-2xl font-semibold text-center mb-6 text-slate-200">
+          All Vesting Contract Data
+        </h2>
+        <div className="overflow-x-auto bg-slate-800 border border-slate-700 rounded-lg shadow-lg">
+          <table className="min-w-full divide-y divide-slate-700">
+            <thead className="bg-slate-750 sticky top-0 z-10">
+              <tr>
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider"
+                >
+                  #
+                </th>
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider"
+                >
+                  Recipient Address
+                </th>
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider"
+                >
+                  Proxy Contract
+                </th>
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-right text-xs font-medium text-slate-300 uppercase tracking-wider"
+                >
+                  Total Vested (TKO)
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-slate-800 divide-y divide-slate-700">
+              {vestingData.map((entry, index) => (
+                <tr
+                  key={index}
+                  className={`${
+                    index % 2 === 0 ? "bg-slate-800" : "bg-slate-850"
+                  } hover:bg-slate-700/50 transition-colors`}
+                >
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400">
+                    {index + 1}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
+                    <a
+                      href={`${ETHERSCAN_BASE_URL}${entry.recipient}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-pink-400 transition-colors"
+                      title={entry.recipient}
+                    >
+                      {`${entry.recipient.slice(
+                        0,
+                        6
+                      )}...${entry.recipient.slice(-4)}`}
+                    </a>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
+                    <a
+                      href={`${ETHERSCAN_BASE_URL}${entry.proxy}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-pink-400 transition-colors"
+                      title={entry.proxy}
+                    >
+                      {`${entry.proxy.slice(0, 6)}...${entry.proxy.slice(-4)}`}
+                    </a>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300 text-right">
+                    {entry.vestAmount.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-center text-xs text-slate-500 mt-12 pb-12">
+        Mostly chat gpted, use at your own risk. github:
+        <a
+          href="https://github.com/2manslkh/taiko-claimer"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline text-sm font-medium"
+        >
+          https://github.com/2manslkh/taiko-claimer
+        </a>
       </p>
     </div>
   );
