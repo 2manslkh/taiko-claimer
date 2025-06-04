@@ -764,18 +764,6 @@ export default function HomePage() {
           </table>
         </div>
       </div>
-
-      <p className="text-center text-xs text-slate-500 mt-12 pb-12">
-        Mostly chat gpted, use at your own risk. github:
-        <a
-          href="https://github.com/2manslkh/taiko-claimer"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-400 hover:text-blue-300 underline text-sm font-medium"
-        >
-          https://github.com/2manslkh/taiko-claimer
-        </a>
-      </p>
     </div>
   );
 }
