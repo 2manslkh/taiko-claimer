@@ -11,7 +11,7 @@ import {
 import { formatEther, type Address, isAddress, parseUnits } from "viem";
 import { toast } from "sonner";
 import { mainnet } from "viem/chains";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +24,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { vestingData, type VestingEntry } from "@/data/vesting-data";
 import vestingContractAbi from "@/abi/vestingContract.json";
-import { useWeb3Modal } from "@web3modal/wagmi/react";
 
 const STATIC_TGE_TIMESTAMP = 1717588800; // Unix timestamp in seconds
 const STATIC_ONE_YEAR = 31536000; // Seconds in one year
@@ -37,7 +37,6 @@ const ETHERSCAN_BASE_URL = "https://etherscan.io/address/";
 const COINMARKETCAP_URL = "https://coinmarketcap.com/currencies/taiko/";
 
 export default function HomePage() {
-  const { open } = useWeb3Modal();
   const {
     address: connectedAddress,
     isConnected,
@@ -53,25 +52,33 @@ export default function HomePage() {
   const [countdown, setCountdown] = useState<string>("");
   const [isClaimTime, setIsClaimTime] = useState<boolean>(false);
   const [withdrawAmountInput, setWithdrawAmountInput] = useState<string>("");
+  const [isUnsafeMode, setIsUnsafeMode] = useState<boolean>(false);
 
   // Find vesting info based on connected address or user input
   useEffect(() => {
     if (isConnected && connectedAddress) {
+      setUserInputAddress(connectedAddress); // Always set user input to connected address for reference
       const found = vestingData.find(
         (v) => v.recipient.toLowerCase() === connectedAddress.toLowerCase()
       );
       if (found) {
         setVestingInfo(found);
         setDerivedProxyAddress(found.proxy);
-        setUserInputAddress(connectedAddress); // Populate input for reference
+        // toast.success('Wallet connected and vesting info loaded.'); // Optional: feedback
       } else {
         setVestingInfo(null);
         setDerivedProxyAddress(undefined);
+        // Consider a gentle toast here if the connected address is not in the list
+        // toast.info(`Your connected address (${connectedAddress.slice(0,6)}...${connectedAddress.slice(-4)}) was not found in the vesting data. You can try entering a different recipient or proxy address manually if this dApp instance is configured for read-only mode for non-listed addresses.`);
       }
     } else {
-      // Reset if disconnected
+      // Wallet is disconnected
       setVestingInfo(null);
       setDerivedProxyAddress(undefined);
+      // Optionally clear userInputAddress if you don't want it to persist after disconnect
+      // setUserInputAddress('');
+      // Or, keep it, so if they disconnect to type, their input isn't lost.
+      // For now, let's not clear it automatically on disconnect.
     }
   }, [isConnected, connectedAddress]);
 
@@ -214,29 +221,6 @@ export default function HomePage() {
     });
 
   const handleClaim = async () => {
-    if (!derivedProxyAddress) {
-      toast.error("Vesting contract address not loaded.");
-      return;
-    }
-    if (!isConnected || !connectedAddress) {
-      toast.error("Please connect your wallet to claim.");
-      open();
-      return;
-    }
-    if (currentChainId !== mainnet.id) {
-      toast.error("Please switch to Ethereum Mainnet to claim.");
-      switchChain({ chainId: mainnet.id });
-      return;
-    }
-    if (
-      vestingInfo?.recipient.toLowerCase() !== connectedAddress.toLowerCase()
-    ) {
-      toast.error(
-        "Connected wallet does not match the recipient address for this vesting contract."
-      );
-      return;
-    }
-
     let amountToWithdrawBigInt: bigint;
     try {
       if (!withdrawAmountInput.trim()) {
@@ -244,6 +228,34 @@ export default function HomePage() {
         return;
       }
       amountToWithdrawBigInt = parseUnits(withdrawAmountInput, TOKEN_DECIMALS);
+    } catch (error) {
+      console.error("Error parsing withdraw amount:", error);
+      toast.error("Invalid withdrawal amount. Please enter a valid number.");
+      return;
+    }
+
+    if (!isUnsafeMode) {
+      if (!derivedProxyAddress) {
+        toast.error("Vesting contract address not loaded.");
+        return;
+      }
+      if (!isConnected || !connectedAddress) {
+        toast.error("Please connect your wallet to claim.");
+        return;
+      }
+      if (currentChainId !== mainnet.id) {
+        toast.error("Please switch to Ethereum Mainnet to claim.");
+        switchChain({ chainId: mainnet.id });
+        return;
+      }
+      if (
+        vestingInfo?.recipient.toLowerCase() !== connectedAddress.toLowerCase()
+      ) {
+        toast.error(
+          "Connected wallet does not match the recipient address for this vesting contract."
+        );
+        return;
+      }
       if (amountToWithdrawBigInt <= BigInt(0)) {
         toast.error("Withdrawal amount must be greater than zero.");
         return;
@@ -257,18 +269,38 @@ export default function HomePage() {
         );
         return;
       }
-    } catch (error) {
-      console.error("Error parsing withdraw amount:", error);
-      toast.error("Invalid withdrawal amount. Please enter a valid number.");
-      return;
+      if (
+        typeof withdrawableAmount !== "bigint" ||
+        amountToWithdrawBigInt > withdrawableAmount
+      ) {
+        toast.error(
+          "Cannot withdraw more than the available amount (safety check)."
+        );
+        return;
+      }
+    } else {
+      if (!isConnected || !connectedAddress) {
+        toast.error(
+          "Unsafe mode: Wallet still needs to be connected to send transaction."
+        );
+        return;
+      }
+      if (!derivedProxyAddress) {
+        toast.error("Unsafe mode: Proxy address still needed for transaction.");
+        return;
+      }
+      toast.info(
+        <div className="flex items-center">
+          <AlertTriangle className="h-5 w-5 mr-2 text-yellow-400" />
+          <span>UNSAFE MODE ACTIVE: Bypassing most claim checks.</span>
+        </div>,
+        { duration: 5000 }
+      );
     }
 
-    if (
-      typeof withdrawableAmount !== "bigint" ||
-      amountToWithdrawBigInt > withdrawableAmount
-    ) {
+    if (typeof amountToWithdrawBigInt === "undefined") {
       toast.error(
-        "Cannot withdraw more than the available amount (safety check)."
+        "Withdrawal amount was not properly defined. Please check input."
       );
       return;
     }
@@ -276,9 +308,9 @@ export default function HomePage() {
     claimTokens(
       {
         abi: vestingContractAbi,
-        address: derivedProxyAddress,
+        address: derivedProxyAddress as Address,
         functionName: "withdraw",
-        args: [connectedAddress, amountToWithdrawBigInt],
+        args: [connectedAddress as Address, amountToWithdrawBigInt],
         chainId: mainnet.id,
       },
       {
@@ -332,6 +364,15 @@ export default function HomePage() {
   }, [withdrawableAmount]);
 
   const canClaim = useMemo(() => {
+    if (isUnsafeMode) {
+      return (
+        isConnected &&
+        !!derivedProxyAddress &&
+        withdrawAmountInput.trim() !== "" &&
+        !isClaiming &&
+        !isConfirming
+      );
+    }
     if (!withdrawAmountInput.trim()) return false;
     try {
       const amount = parseUnits(withdrawAmountInput, TOKEN_DECIMALS);
@@ -349,6 +390,7 @@ export default function HomePage() {
       return false;
     }
   }, [
+    isUnsafeMode,
     withdrawAmountInput,
     isClaimTime,
     isConnected,
@@ -357,15 +399,14 @@ export default function HomePage() {
     withdrawableAmount,
     vestingInfo,
     connectedAddress,
+    derivedProxyAddress,
   ]);
 
   const handleSetMaxWithdraw = () => {
     if (
       withdrawableAmount !== undefined &&
-      typeof withdrawableAmount === "bigint" &&
-      withdrawableAmount > BigInt(0)
+      typeof withdrawableAmount === "bigint"
     ) {
-      // Use formatEther to get the full precision string representation
       setWithdrawAmountInput(formatEther(withdrawableAmount));
       toast.info("Withdraw amount set to maximum available.");
     } else {
@@ -398,32 +439,66 @@ export default function HomePage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex justify-center">
-            {/* @ts-expect-error - Web3Modal is not typed */}
-            <w3m-button />
+            <appkit-button />
           </div>
 
-          {!isConnected && (
-            <div className="space-y-2 pt-4">
+          {/* Unsafe Mode Checkbox */}
+          <div className="flex items-center space-x-2 justify-center pt-4 border-t border-slate-700 mt-4">
+            <Checkbox
+              id="unsafeMode"
+              checked={isUnsafeMode}
+              onCheckedChange={(checked) => setIsUnsafeMode(Boolean(checked))}
+              className="border-slate-600 data-[state=checked]:bg-yellow-500 data-[state=checked]:text-slate-900"
+            />
+            <Label
+              htmlFor="unsafeMode"
+              className={`text-sm font-medium ${
+                isUnsafeMode ? "text-yellow-400" : "text-slate-300"
+              }`}
+            >
+              Enable Unsafe Mode (Bypass Checks)
+            </Label>
+          </div>
+          {isUnsafeMode && (
+            <div className="flex items-center justify-center p-3 bg-yellow-900/30 border border-yellow-700 rounded-md text-yellow-300 text-xs">
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              Warning: Unsafe mode is active. Claim checks are bypassed.
+            </div>
+          )}
+
+          {/* Show manual input ONLY if NOT connected, OR if connected AND in unsafe mode (allowing override) */}
+          {(!isConnected || (isConnected && isUnsafeMode)) && (
+            <div className="space-y-2 pt-4 border-t border-slate-700 mt-4">
               <Label htmlFor="addressInput" className="text-slate-300">
-                Enter Recipient or Proxy Address (Read-Only):
+                {isUnsafeMode && isConnected
+                  ? "Enter Recipient/Proxy to Override (Unsafe Mode):"
+                  : "Enter Recipient or Proxy Address (Read-Only View):"}
               </Label>
               <div className="flex space-x-2">
                 <Input
                   id="addressInput"
                   type="text"
                   placeholder="0x..."
-                  value={userInputAddress}
+                  value={userInputAddress} // This will show connected address if connected, or manual input
                   onChange={(e) => setUserInputAddress(e.target.value)}
-                  className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:ring-pink-500 focus:border-pink-500"
+                  disabled={isConnected && !isUnsafeMode} // Disable if connected and NOT in unsafe mode
+                  className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:ring-pink-500 focus:border-pink-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <Button
                   onClick={handleLoadAddressInfo}
                   variant="secondary"
                   className="bg-pink-600 hover:bg-pink-700 text-white"
+                  disabled={isConnected && !isUnsafeMode} // Disable if connected and NOT in unsafe mode
                 >
                   Load Info
                 </Button>
               </div>
+              {isConnected && isUnsafeMode && (
+                <p className="text-xs text-yellow-400 text-center">
+                  Inputting an address here in Unsafe Mode will attempt to
+                  override vesting data lookup based on your connected wallet.
+                </p>
+              )}
             </div>
           )}
 
@@ -530,13 +605,11 @@ export default function HomePage() {
                     value={withdrawAmountInput}
                     onChange={(e) => setWithdrawAmountInput(e.target.value)}
                     disabled={
-                      !isClaimTime ||
                       !isConnected ||
                       isLoadingWithdrawableAmount ||
                       isConfirming ||
                       isClaiming ||
-                      typeof withdrawableAmount !== "bigint" ||
-                      withdrawableAmount === BigInt(0)
+                      typeof withdrawableAmount !== "bigint"
                     }
                     className="flex-grow bg-slate-700 border-slate-600 text-white placeholder-slate-400 focus:ring-pink-500 focus:border-pink-500 disabled:opacity-70"
                   />
@@ -545,13 +618,11 @@ export default function HomePage() {
                     size="sm"
                     onClick={handleSetMaxWithdraw}
                     disabled={
-                      !isClaimTime ||
                       !isConnected ||
                       isLoadingWithdrawableAmount ||
                       isConfirming ||
                       isClaiming ||
-                      typeof withdrawableAmount !== "bigint" ||
-                      withdrawableAmount === BigInt(0)
+                      typeof withdrawableAmount !== "bigint"
                     }
                     className="border-pink-500 text-pink-500 hover:bg-pink-500/10 hover:text-pink-400 disabled:opacity-50 whitespace-nowrap"
                   >

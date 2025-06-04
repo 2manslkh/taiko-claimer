@@ -1,36 +1,32 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Web3Provider } from "@/components/Web3Provider";
 import { headers } from "next/headers";
-import { cookieToInitialState } from "wagmi";
-import { wagmiConfig } from "@/config/web3modal";
+import ReownProvider from "@/context/ReownProvider";
 import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Taiko Token Claimer",
-  description: "Claim your Taiko vesting tokens",
+  description: "Claim your vested Taiko (TKO) tokens.",
 };
 
 export default async function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
-  const initialState = cookieToInitialState(
-    wagmiConfig,
-    (await headers()).get("cookie")
-  );
+}) {
+  const headersObj = await headers();
+  const cookies = headersObj.get("cookie");
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
-        <Web3Provider initialState={initialState}>
+        <ReownProvider cookies={cookies}>
           {children}
           <Toaster />
-        </Web3Provider>
+        </ReownProvider>
       </body>
     </html>
   );
